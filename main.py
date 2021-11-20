@@ -1,3 +1,4 @@
+from math import e
 import os
 import sys
 
@@ -30,6 +31,24 @@ class DSC(BotAI):
         await self.speedmine(self.units(UnitTypeId.SCV))
         if self.time < 1:
             await self.split_workers()
+        await self.build_gases()
+        await self.gathering_gases()
+        await self.expand()
+        await self.replace_natural()
+        await self.cashe_variables()
+
+    async def cashe_variables(self):
+        self.gas_workers = 3
+        self.planned_locations: Set[Point2] = {placeholder.position for placeholder in self.placeholders}
+        self.my_structure_locations: Set[Point2] = {structure.position for structure in self.structures}
+        self.enemy_structure_locations: Set[Point2] = {structure.position for structure in self.enemy_structures}
+        self.blocked_locations: Set[Point2] = (
+            self.my_structure_locations | self.planned_locations | self.enemy_structure_locations
+        )
+        if self.townhalls_flying.amount + self.townhalls.amount == 1:
+            self.natural = await self.get_next_expansion()
+
+
 #   find idles
     async def idles(self):          
         for worker in self.workers:
@@ -53,9 +72,11 @@ class DSC(BotAI):
 
 #   train workers
     async def train_workers(self):
-        for CC in self.structures(UnitTypeId.COMMANDCENTER).ready:
-            if self.can_afford(UnitTypeId.SCV) and CC.is_idle and self.workers.amount < 88:
-                self.do(CC.train(UnitTypeId.SCV))
+        townhalls = (self.townhalls(UnitTypeId.COMMANDCENTER).ready or self.townhalls(UnitTypeId.ORBITALCOMMAND) or
+                     self.townhalls(UnitTypeId.PLANETARYFORTRESS))
+        for CC in townhalls:
+            if self.can_afford(UnitTypeId.SCV) and CC.is_idle and self.workers.amount < 88 and (CC.position == self.start_location or CC.position in self.expansion_locations_list):
+                self.do(CC(AbilityId.COMMANDCENTERTRAIN_SCV))
 
 
 #   build supply
@@ -71,7 +92,7 @@ class DSC(BotAI):
                 if len(depot_placement_positions) == 0:
                     return
                 target_depot_location: Point2 = depot_placement_positions.pop()
-                workers: Units = self.workers.gathering
+                workers: Units = self.workers
                 if workers: 
                     worker: Unit = workers.closest_to(target_depot_location)
                     if worker.is_idle or worker.is_gathering:
@@ -136,12 +157,87 @@ class DSC(BotAI):
             return
         if self.enemy_units.closer_than(15, townhall):
             return
-        if worker.is_carrying_minerals or (worker.is_carrying_vespene and self.gas_harvester_target == 2):
+        if worker.is_carrying_minerals or (worker.is_carrying_vespene and self.gas_workers == 2):
             target: Point2 = townhall.position.towards(worker, townhall.radius + worker.radius)
             if worker.distance_to(target) > 0.5:
                 self.do(worker.move(target))
                 self.do(worker(AbilityId.SMART, townhall, True))
                 return
+
+
+    async def build_gases(self):
+        if self.workers.amount > 13 and self.can_afford(UnitTypeId.REFINERY) and self.structures(UnitTypeId.REFINERY).amount <= 0 and not self.already_pending(UnitTypeId.REFINERY):
+            workers: Units = self.workers
+            CCs = self.townhalls(UnitTypeId.COMMANDCENTER)
+            if workers: 
+                for cc in CCs:
+                    vgs = self.vespene_geyser.closer_than(10, cc)
+                for vg in vgs:
+                    worker: Unit = workers.closest_to(vg)
+                    if (worker.is_idle or worker.is_gathering) and not self.gas_buildings.closer_than(1, vg):
+                        worker.build_gas(vg)
+        if self.workers.amount > 19 and self.can_afford(UnitTypeId.REFINERY) and self.gas_buildings.amount < 2 * self.townhalls.amount:
+            workers: Units = self.workers
+            CCs = self.townhalls(UnitTypeId.COMMANDCENTER)
+            if workers: 
+                for cc in CCs:
+                    vgs = self.vespene_geyser.closer_than(10, cc)
+                for vg in vgs:
+                    worker: Unit = workers.closest_to(vg)
+                    if (worker.is_idle or worker.is_gathering) and not self.gas_buildings.closer_than(1, vg):
+                        worker.build_gas(vg)
+
+
+    async def gathering_gases(self):
+        if self.vespene > self.minerals + 400:
+            self.gas_workers = 1
+        else:
+            self.gas_workers = 3
+
+        for refinery in self.gas_buildings:
+            if self.gas_workers == 2:
+                if refinery.assigned_harvesters < refinery.ideal_harvesters - 2:
+                    worker: Units = self.workers.closer_than(10, refinery)
+                    if worker:
+                        worker.random.gather(refinery)
+            else:
+                if refinery.assigned_harvesters < refinery.ideal_harvesters:
+                    worker: Units = self.workers.closer_than(10, refinery)
+                    if worker:
+                        worker.random.gather(refinery)
+                elif refinery.assigned_harvesters > refinery.ideal_harvesters:
+                    for worker in self.workers:
+                        if worker.is_carrying_vespene:
+                            self.do(worker.gather(self.mineral_field.closest_to(worker)))
+
+
+    async def expand(self):
+        if self.can_afford(UnitTypeId.COMMANDCENTER) and not self.already_pending(UnitTypeId.COMMANDCENTER):
+            if self.townhalls.amount == 1:
+                CC_placement_pos = await self.find_placement(UnitTypeId.COMMANDCENTER, near=self.townhalls[0].position.towards(self.natural, 12))
+            elif self.natural in self.blocked_locations:
+                CC_placement_pos = await self.get_next_expansion()
+            else:
+                return
+            if CC_placement_pos not in self.blocked_locations:
+                for worker in self.workers:
+                    if worker.is_idle or worker.is_gathering:
+                        self.do(worker.build(UnitTypeId.COMMANDCENTER, CC_placement_pos))
+
+
+
+    async def replace_natural(self):
+        self.townhalls_flying = (self.townhalls(UnitTypeId.COMMANDCENTERFLYING) |
+                                 self.townhalls(UnitTypeId.ORBITALCOMMANDFLYING))
+        if self.structures(UnitTypeId.COMMANDCENTER).ready.amount + self.townhalls_flying.amount == 2:
+            townhall = self.townhalls.closest_to(self.natural) 
+            self.do(townhall(AbilityId.LIFT))
+            print(townhall)
+            for townhall in self.townhalls_flying:
+                townhall(AbilityId.LAND, self.natural)
+                print('land')
+
+
 def main():
     map = random.choice(
         [
