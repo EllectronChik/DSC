@@ -66,7 +66,7 @@ class DSC(BotAI):
         closest_mineral_field = self.mineral_field.closest_to(self.townhalls[0])
         for worker in self.workers:
             if worker.is_idle:
-                self.do(worker.gather())
+                self.do(worker.gather(closest_mineral_field))
 
 #   split workers
     async def split_workers(self):
