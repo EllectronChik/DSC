@@ -23,7 +23,7 @@ from sc2.units import Units
 class DSC(BotAI):
     natural_was_taken = False
     overmine_workers = []
-    base_harvester = []
+    #base_harvester = []
 
 
     async def on_step(self, iteration):
@@ -33,7 +33,7 @@ class DSC(BotAI):
         await self.build_barrack()
         await self.idles()
         await self.supply_cond()
-        await self.speedmine(self.units(UnitTypeId.SCV))
+        #await self.speedmine(self.units(UnitTypeId.SCV))
         if self.time < 1:
             await self.split_workers()
         await self.build_gases()
@@ -237,6 +237,7 @@ class DSC(BotAI):
 
 
     async def gathering_minerals(self):
+        '''
         for townhall in self.townhalls.ready.not_flying:
             ind = self.townhalls.not_flying.index(townhall)
             while len(self.base_harvester) < len(self.townhalls.not_flying):
@@ -245,20 +246,21 @@ class DSC(BotAI):
             worker for worker in self.workers.closer_than(10, townhall)
             if not worker.is_carrying_vespene and not worker.is_constructing_scv
         ]
+        '''
 
-        for townhall in self.townhalls.ready.not_flying:
-            ind = self.townhalls.not_flying.index(townhall)
-            for worker in self.base_harvester[ind]:
-                if worker.is_gathering:
-                    if townhall.ideal_harvesters < len(self.base_harvester[ind]):
-                        if len(self.base_harvester[ind]) - len(self.overmine_workers) > townhall.ideal_harvesters:
-                            self.overmine_workers.append(worker)
-        for townhall in self.townhalls:
-            if townhall.ideal_harvesters > len(self.base_harvester[ind]):
-                for worker in self.overmine_workers:
-                    field = self.mineral_field.closer_than(10, townhall).random
-                    self.do(worker.gather(field))
-                    self.overmine_workers.remove(worker)
+        for worker in self.workers:
+            for townhall in self.townhalls.ready.not_flying:
+                if townhall.assigned_harvesters > townhall.ideal_harvesters:
+                    if worker in self.workers.closer_than(10, townhall) and worker.is_carrying_minerals:
+                        self.overmine_workers.append(worker)
+                elif townhall.assigned_harvesters < townhall.ideal_harvesters:
+                    if worker in self.overmine_workers:
+                        self.do(worker.gather(self.mineral_field.closest_to(townhall)))
+                        self.overmine_workers.remove(worker)
+                    
+            if worker in self.overmine_workers and (worker.is_constructing_scv or worker.is_carrying_vespene):
+                self.overmine_workers.remove(worker)
+                    
 
 
 
