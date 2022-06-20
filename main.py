@@ -59,11 +59,14 @@ class DSC(BotAI):
 
 
 #   find idles
-    async def idles(self):          
-        if self.townhalls:
-            for worker in self.workers:
-                if worker.is_idle:
-                    self.do(worker.gather(self.mineral_field.closest_to(self.townhalls[0])))
+    async def idles(self):
+        if not self.townhalls:
+            return
+        
+        closest_mineral_field = self.mineral_field.closest_to(self.townhalls[0])
+        for worker in self.workers:
+            if worker.is_idle:
+                self.do(worker.gather(closest_mineral_field))
 
 #   split workers
     async def split_workers(self):
